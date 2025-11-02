@@ -1,0 +1,6 @@
+Task ID,Core ID,Wait Time (ms),Exec Time (ms),Turnaround Time (ms)
+0,1,34,302,336
+1,2,12,410,422
+2,1,318,508,826
+3,2,423,603,1026
+4,1,826,710,1536
