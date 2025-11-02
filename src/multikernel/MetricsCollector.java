@@ -1,74 +1,138 @@
 package multikernel;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.*;
+
+/**
+ * Collects and exports runtime metrics from all cores:
+ *   - Task turnaround and waiting times
+ *   - CPU utilization per core
+ */
 public class MetricsCollector {
 
-    // Inner class to hold task execution records
-    public static class Record {
-        public int coreId;
-        public int taskId;
-        public long arrivalTime;
-        public long startTime;
-        public long endTime;
-
-        public Record(int coreId, int taskId, long arrival, long start, long end) {
-            this.coreId = coreId;
-            this.taskId = taskId;
-            this.arrivalTime = arrival;
-            this.startTime = start;
-            this.endTime = end;
-        }
+    /** Represents one completed task record. */
+    private static class TaskRecord {
+        int coreId;
+        int taskId;
+        long arrivalTime;
+        long startTime;
+        long endTime;
     }
 
-    private final List<Record> records = new ArrayList<>();
-
-    // Method to log each task's execution timeline
-    public synchronized void recordExecution(int coreId, Task task, long startTime, long endTime) {
-        records.add(new Record(coreId, task.getId(), task.getArrivalTime(), startTime, endTime));
+    /** Represents one core's utilization record. */
+    private static class CoreUtilization {
+        long busyMs;
+        long totalMs;
     }
 
-    // Allow other classes to access the collected records
-    public List<Record> getRecords() {
-        return records;
+    private final List<TaskRecord> taskRecords = new ArrayList<>();
+    private final Map<Integer, CoreUtilization> coreUtilization = new HashMap<>();
+
+    // ----------------------------------------------------------------------
+    // Task-level metrics
+    // ----------------------------------------------------------------------
+
+    /** Called by each core when it finishes running a task. */
+    public synchronized void recordTaskCompletion(int coreId, Task task,
+                                                  long startWall, long endWall) {
+        TaskRecord record = new TaskRecord();
+        record.coreId = coreId;
+        record.taskId = task.getId();
+        record.arrivalTime = task.getArrivalTime();
+        record.startTime = startWall;
+        record.endTime = endWall;
+        taskRecords.add(record);
     }
 
-    // Print summary statistics to the console
-    public void printSummary() {
-        System.out.println("------ Task Execution Summary ------");
-        for (Record r : records) {
-            long turnaround = r.endTime - r.arrivalTime;
-            long waitTime = r.startTime - r.arrivalTime;
-            System.out.printf("Task %d | Core %d | Wait: %d ms | Exec: %d ms | Turnaround: %d ms\n",
-                    r.taskId, r.coreId, waitTime, r.endTime - r.startTime, turnaround);
-        }
-        System.out.println("------------------------------------");
-    }
-    public void exportToCSV(String filename) {
-        try (PrintWriter writer = new PrintWriter(new FileWriter(filename))) {
-            writer.println("Task ID,Core ID,Wait Time (ms),Exec Time (ms),Turnaround Time (ms)");
-            for (Record r : records) {
-                long wait = r.startTime - r.arrivalTime;
-                long exec = r.endTime - r.startTime;
-                long turnaround = r.endTime - r.arrivalTime;
-                writer.printf("%d,%d,%d,%d,%d\n", r.taskId, r.coreId, wait, exec, turnaround);
-            }
-            System.out.println("CSV exported: " + filename);
-        } catch (IOException e) {
-            System.err.println("Error writing CSV: " + e.getMessage());
-        }
-    }
-    public double computeAverageTurnaround() {
-        if (records.isEmpty()) return 0.0;
-
-        long total = 0;
-        for (Record r : records) {
+    /** Computes average turnaround time (end - arrival). */
+    public synchronized double getAverageTurnaround() {
+        if (taskRecords.isEmpty()) return 0.0;
+        double total = 0;
+        for (TaskRecord r : taskRecords) {
             total += (r.endTime - r.arrivalTime);
         }
-        return total / (double) records.size();
+        return total / taskRecords.size();
+    }
+
+    /** Computes average waiting time (start - arrival). */
+    public synchronized double getAverageWaiting() {
+        if (taskRecords.isEmpty()) return 0.0;
+        double total = 0;
+        for (TaskRecord r : taskRecords) {
+            total += (r.startTime - r.arrivalTime);
+        }
+        return total / taskRecords.size();
+    }
+
+    /** Exports per-task metrics to CSV. */
+    public synchronized void exportCSV(String filename) {
+        try (PrintWriter pw = new PrintWriter(new FileWriter(filename))) {
+            pw.println("coreId,taskId,arrivalTime,startTime,endTime,turnaroundMs,waitingMs");
+            for (TaskRecord r : taskRecords) {
+                long turnaround = r.endTime - r.arrivalTime;
+                long waiting = r.startTime - r.arrivalTime;
+                pw.printf(Locale.US,
+                        "%d,%d,%d,%d,%d,%d,%d%n",
+                        r.coreId, r.taskId,
+                        r.arrivalTime, r.startTime, r.endTime,
+                        turnaround, waiting);
+            }
+            System.out.println("✔ Task metrics exported to " + filename);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // ----------------------------------------------------------------------
+    // Core utilization metrics
+    // ----------------------------------------------------------------------
+
+    /** Called by each core when it stops. */
+    public synchronized void recordCoreUtilization(int coreId, long busyMs, long totalMs) {
+        CoreUtilization util = coreUtilization.getOrDefault(coreId, new CoreUtilization());
+        util.busyMs += busyMs;
+        util.totalMs += totalMs;
+        coreUtilization.put(coreId, util);
+    }
+
+    /** Returns utilization percentage per core. */
+    public synchronized Map<Integer, Double> getCoreUtilizationPercent() {
+        Map<Integer, Double> result = new HashMap<>();
+        for (Map.Entry<Integer, CoreUtilization> entry : coreUtilization.entrySet()) {
+            int coreId = entry.getKey();
+            CoreUtilization u = entry.getValue();
+            double percent = (u.totalMs == 0) ? 0.0 : (100.0 * u.busyMs / u.totalMs);
+            result.put(coreId, percent);
+        }
+        return result;
+    }
+
+    /** Exports utilization stats to CSV. */
+    public synchronized void exportUtilizationCSV(String filename) {
+        try (PrintWriter pw = new PrintWriter(new FileWriter(filename))) {
+            pw.println("coreId,busyMs,totalMs,utilizationPercent");
+            for (Map.Entry<Integer, CoreUtilization> entry : coreUtilization.entrySet()) {
+                int coreId = entry.getKey();
+                CoreUtilization u = entry.getValue();
+                double pct = (u.totalMs == 0) ? 0.0 : (100.0 * u.busyMs / u.totalMs);
+                pw.printf(Locale.US, "%d,%d,%d,%.2f%n",
+                        coreId, u.busyMs, u.totalMs, pct);
+            }
+            System.out.println("✔ Utilization metrics exported to " + filename);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    /** Returns a map of TaskID -> Turnaround time (ms) for chart visualization */
+    public synchronized Map<Integer, Long> getTaskTurnarounds() {
+        Map<Integer, Long> map = new LinkedHashMap<>();
+        for (var r : taskRecords) {
+            long turnaround = r.endTime - r.arrivalTime;
+            map.put(r.taskId, turnaround);
+        }
+        return map;
     }
 
 }

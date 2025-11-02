@@ -1,36 +1,33 @@
 package multikernel;
 
 import org.jfree.chart.ChartFactory;
-import org.jfree.chart.ChartPanel;
+import org.jfree.chart.ChartFrame;
 import org.jfree.chart.JFreeChart;
-import org.jfree.chart.plot.PlotOrientation;
 import org.jfree.data.category.DefaultCategoryDataset;
 
-import javax.swing.*;
-import java.util.List;
+import java.util.Map;
 
+/**
+ * Generates a bar chart for task turnaround time.
+ */
 public class ChartGenerator {
 
-    public static void showTurnaroundChart(List<MetricsCollector.Record> records) {
+    public static void showTurnaroundChart(Map<Integer, Long> taskTurnarounds) {
         DefaultCategoryDataset dataset = new DefaultCategoryDataset();
 
-        for (MetricsCollector.Record r : records) {
-            long turnaround = r.endTime - r.arrivalTime;
-            dataset.addValue(turnaround, "Turnaround Time", "Task " + r.taskId);
+        for (Map.Entry<Integer, Long> entry : taskTurnarounds.entrySet()) {
+            dataset.addValue(entry.getValue(), "Turnaround", "Task " + entry.getKey());
         }
 
-        JFreeChart barChart = ChartFactory.createBarChart(
-                "Task Turnaround Time",
-                "Task ID",
-                "Time (ms)",
-                dataset,
-                PlotOrientation.VERTICAL,
-                true, true, false);
+        JFreeChart chart = ChartFactory.createBarChart(
+                "Task Turnaround Times",
+                "Task",
+                "Turnaround (ms)",
+                dataset
+        );
 
-        JFrame frame = new JFrame("Simulation Results");
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setContentPane(new ChartPanel(barChart));
-        frame.setSize(800, 600);
+        ChartFrame frame = new ChartFrame("Task Turnaround", chart);
+        frame.pack();
         frame.setVisible(true);
     }
 }
