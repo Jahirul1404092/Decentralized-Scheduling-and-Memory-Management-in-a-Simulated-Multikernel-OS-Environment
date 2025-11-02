@@ -30,7 +30,17 @@ public class Core extends Thread {
 
                 if (memoryManager.allocate(task.getMemoryRequired())) {
                     System.out.println("Core " + coreId + " allocated memory for task: " + task.getId());
+
+                    // Record immediately after allocation
+                    if (memoryTracker != null)
+                        memoryTracker.record(coreId, memoryManager.getUsedMemory());
+
                     simulateExecution(task);
+
+                    // Record right before deallocation
+                    if (memoryTracker != null)
+                        memoryTracker.record(coreId, memoryManager.getUsedMemory());
+
                     memoryManager.deallocate(task.getMemoryRequired());
                     System.out.println("Core " + coreId + " deallocated memory for task: " + task.getId());
                 } else {
@@ -39,20 +49,18 @@ public class Core extends Thread {
                 }
             } else {
                 try {
-                    Thread.sleep(10); // idle wait if no task
+                    Thread.sleep(10); // Idle wait
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
             }
 
-            // Record memory usage
-            if (memoryTracker != null) {
+            // Sample memory periodically (background)
+            if (memoryTracker != null)
                 memoryTracker.record(coreId, memoryManager.getUsedMemory());
-            }
 
-            // Sampling delay to reduce heatmap density
             try {
-                Thread.sleep(100); // Adjust sampling rate here
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
